@@ -1,0 +1,21 @@
+# SwiftPM
+.build/
+Packages/
+Package.resolved
+.swiftpm/
+xcuserdata/
+
+# Built app bundle (regenerate with ./build.sh)
+*.app/
+
+# macOS
+.DS_Store
+
+# Xcode
+*.xcodeproj/
+DerivedData/
+
+# Editors
+.vscode/
+.idea/
+*.swp
