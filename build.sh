@@ -25,6 +25,12 @@ mkdir -p "${APP_DIR}/Contents/Resources"
 cp "${BIN_PATH}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 cp Info.plist "${APP_DIR}/Contents/Info.plist"
 
+# App icon (regenerate with tools/make_icon.sh). Optional — the app runs
+# fine without it, just with the macOS default placeholder.
+if [[ -f AppIcon.icns ]]; then
+  cp AppIcon.icns "${APP_DIR}/Contents/Resources/"
+fi
+
 # Ad-hoc sign so WebKit / cookie storage work without Gatekeeper complaints.
 codesign --force --deep --sign - "${APP_DIR}" >/dev/null
 
