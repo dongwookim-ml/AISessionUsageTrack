@@ -101,6 +101,10 @@ struct ServiceState {
 
     var status: Status = .unknown
     var lastUpdated: Date? = nil
+    /// Human-readable reset time, e.g. "Resets at 2:02 PM". Parsed from the
+    /// scraped page at refresh time. For Claude, the "Resets in X hr Y min"
+    /// text is converted to an absolute time first.
+    var resetText: String? = nil
 
     var shortLabel: String {
         switch status {
@@ -416,12 +420,48 @@ final class UsageMonitor: ObservableObject {
                     } else {
                         let pct = Self.firstPercent(in: payload.text)
                         st.status = .ok(text: payload.text, percent: pct)
+                        st.resetText = Self.parseResetText(in: payload.text, service: service)
                     }
                 }
                 self.states[service] = st
             }
         }
     }
+
+    /// Parse a "Resets …" string from the scraped page. Gemini's page renders
+    /// "Resets at H:MM AM/PM" directly; Claude's page renders "Resets in X hr
+    /// Y min", which we convert to an absolute clock time so both services
+    /// display the same shape.
+    static func parseResetText(in text: String, service: Service) -> String? {
+        switch service {
+        case .gemini:
+            // Look for "Resets at H:MM AM/PM" anywhere in the page.
+            let pattern = #"Resets at \d{1,2}:\d{2}\s*(?:AM|PM|am|pm)"#
+            if let r = text.range(of: pattern, options: .regularExpression) {
+                return String(text[r])
+            }
+            return nil
+        case .claude:
+            // Parse "Resets in X hr Y min" / "in Y min" / "in X hr" and add
+            // to the current time to produce an absolute "Resets at H:MM AM/PM".
+            let pattern = #"Resets in(?:\s+(\d+)\s*hr)?(?:\s+(\d+)\s*min)?"#
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let m = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+            else { return nil }
+            var minutes = 0
+            if let r = Range(m.range(at: 1), in: text), let h = Int(text[r]) { minutes += h * 60 }
+            if let r = Range(m.range(at: 2), in: text), let mm = Int(text[r]) { minutes += mm }
+            guard minutes > 0 else { return nil }
+            let target = Date().addingTimeInterval(TimeInterval(minutes * 60))
+            return "Resets at \(claudeResetFormatter.string(from: target))"
+        }
+    }
+
+    private static let claudeResetFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f
+    }()
 
     private static let percentRegex = try! NSRegularExpression(pattern: #"(\d{1,3})\s*%"#)
     static func firstPercent(in s: String) -> Int? {

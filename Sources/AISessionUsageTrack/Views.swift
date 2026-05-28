@@ -67,25 +67,35 @@ struct MenuContentView: View {
 
             Divider()
 
-            HStack {
+            HStack(spacing: 6) {
                 Button {
                     monitor.refreshAll()
                 } label: {
                     Label("Refresh all", systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
 
                 Spacer()
 
-                Button("Settings…") { openSettings() }
-                    .buttonStyle(.borderless)
-                Button("Quit") { NSApp.terminate(nil) }
-                    .buttonStyle(.borderless)
+                Button { openSettings() } label: {
+                    Image(systemName: "gearshape.fill")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Settings…")
+
+                Button { NSApp.terminate(nil) } label: {
+                    Image(systemName: "power")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.red)
+                .help("Quit")
             }
-            .font(.system(size: 12))
         }
         .padding(14)
-        .frame(width: 420)
+        .frame(width: 280)
     }
 
     private func openSettings() {
@@ -132,18 +142,20 @@ struct ServiceSection: View {
                     .tint(state.severityColor)
             }
 
-            statusView
-
-            HStack(spacing: 8) {
-                Button("Refresh") { monitor.refreshNow(service) }
-                    .buttonStyle(.borderless)
-                Button("Open Login Window") { monitor.showLogin(for: service) }
-                    .buttonStyle(.borderless)
-                Button("Logout") { monitor.logout(service) }
-                    .buttonStyle(.borderless)
+            HStack(spacing: 6) {
+                statusView
                 Spacer()
+                SubtleIconButton(systemImage: "arrow.clockwise", help: "Refresh") {
+                    monitor.refreshNow(service)
+                }
+                SubtleIconButton(systemImage: "person.crop.circle", help: "Open login window") {
+                    monitor.showLogin(for: service)
+                }
+                SubtleIconButton(systemImage: "rectangle.portrait.and.arrow.right",
+                                 help: "Logout", tint: .red) {
+                    monitor.logout(service)
+                }
             }
-            .font(.system(size: 11))
         }
     }
 
@@ -166,16 +178,10 @@ struct ServiceSection: View {
                 .foregroundStyle(.red)
                 .font(.system(size: 11))
                 .lineLimit(3)
-        case .ok(let text, _):
-            ScrollView {
-                Text(text.isEmpty ? "(no usage info found)" : text)
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .frame(maxHeight: 160)
-            .background(Color.secondary.opacity(0.08))
-            .cornerRadius(6)
+        case .ok:
+            Text(state.resetText ?? "Reset time not detected")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -184,6 +190,37 @@ struct ServiceSection: View {
         f.unitsStyle = .short
         return f
     }()
+}
+
+// MARK: - Compact icon button used for per-service actions
+
+struct SubtleIconButton: View {
+    let systemImage: String
+    let help: String
+    var tint: Color = .primary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 22, height: 22)
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(SubtleIconButtonStyle())
+        .help(help)
+    }
+}
+
+private struct SubtleIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.18 : 0.08))
+            )
+    }
 }
 
 // MARK: - Settings
