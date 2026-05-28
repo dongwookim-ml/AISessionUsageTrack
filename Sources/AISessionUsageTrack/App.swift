@@ -31,18 +31,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 /// The text/icon that lives in the macOS menubar.
+///
+/// MenuBarExtra strips SwiftUI `Image` views from its label (both inside
+/// HStack and inside concatenated `Text(Image(...))`). Unicode glyphs are
+/// just text, so the system can't drop them and per-segment colors still
+/// apply. The dropdown panel keeps SF Symbols since it renders Image fine.
 struct MenuBarLabel: View {
     @EnvironmentObject var monitor: UsageMonitor
 
+    // Glyphs chosen to resemble each brand's actual mark.
+    private static let geminiGlyph = "✦"   // U+2726 — 4-pointed star, like Google's sparkle
+    private static let claudeGlyph = "✱"   // U+2731 — heavy asterisk burst
+
     var body: some View {
-        HStack(spacing: 4) {
+        if monitor.settings.showLabelInMenuBar {
+            let g = monitor.states[.gemini] ?? ServiceState()
+            let c = monitor.states[.claude] ?? ServiceState()
+
+            (
+                Text("\(Self.geminiGlyph) ")
+                    .foregroundColor(Service.gemini.brandColor)
+                + Text("\(g.shortLabel)  ")
+                    .foregroundColor(g.severityColor)
+                + Text("\(Self.claudeGlyph) ")
+                    .foregroundColor(Service.claude.brandColor)
+                + Text(c.shortLabel)
+                    .foregroundColor(c.severityColor)
+            )
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+        } else {
             Image(systemName: "gauge.with.dots.needle.50percent")
-            if monitor.settings.showLabelInMenuBar {
-                let g = monitor.states[.gemini]?.shortLabel ?? "—"
-                let c = monitor.states[.claude]?.shortLabel ?? "—"
-                Text("G:\(g) C:\(c)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-            }
         }
     }
 }

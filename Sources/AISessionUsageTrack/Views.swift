@@ -107,13 +107,16 @@ struct ServiceSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 6) {
+                Image(systemName: service.iconName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(service.brandColor)
                 Text(service.displayName)
                     .font(.system(size: 13, weight: .semibold))
-                if case .ok(_, let pct) = state.status, let pct = pct {
+                if let pct = state.percent {
                     Text("\(pct)%")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundStyle(pct >= 80 ? .red : (pct >= 50 ? .orange : .primary))
+                        .foregroundStyle(state.severityColor)
                 }
                 Spacer()
                 if let updated = state.lastUpdated {
@@ -121,6 +124,12 @@ struct ServiceSection: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            if let pct = state.percent {
+                ProgressView(value: Double(pct), total: 100)
+                    .progressViewStyle(.linear)
+                    .tint(state.severityColor)
             }
 
             statusView

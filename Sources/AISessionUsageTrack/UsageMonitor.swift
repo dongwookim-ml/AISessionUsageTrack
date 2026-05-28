@@ -33,6 +33,24 @@ enum Service: String, CaseIterable, Identifiable {
         }
     }
 
+    /// SF Symbol used in the menubar and section headers. Chosen to resemble
+    /// each brand's actual mark: Google's Gemini logo is a sparkle, and
+    /// Anthropic's Claude logo is an asterisk-style burst.
+    var iconName: String {
+        switch self {
+        case .gemini: return "sparkles"
+        case .claude: return "asterisk"
+        }
+    }
+
+    /// Brand accent color used to tint the icon.
+    var brandColor: Color {
+        switch self {
+        case .gemini: return Color(red: 0.26, green: 0.52, blue: 0.96)   // Google blue
+        case .claude: return Color(red: 0.85, green: 0.47, blue: 0.34)   // Anthropic coral
+        }
+    }
+
     // Pages are SPAs; the extraction script scrapes whatever text we can find
     // that looks usage-related. We deliberately keep this loose — the user can
     // refine selectors later once they see what their account renders. When
@@ -94,6 +112,23 @@ struct ServiceState {
             if let pct = pct { return "\(pct)%" }
             return "ok"
         }
+    }
+
+    /// Severity color for the current usage percent (green / orange / red).
+    /// Used by both the menubar text and the in-menu progress bar.
+    var severityColor: Color {
+        if case .ok(_, let pct?) = status {
+            if pct >= 80 { return .red }
+            if pct >= 50 { return .orange }
+            return .green
+        }
+        return .secondary
+    }
+
+    /// Percent value if known, else nil — for `ProgressView(value:)`.
+    var percent: Int? {
+        if case .ok(_, let pct) = status { return pct }
+        return nil
     }
 }
 
