@@ -41,7 +41,9 @@ enum Service: String, CaseIterable, Identifiable {
     var extractionScript: String {
         return """
         (() => {
-            const root = document.querySelector('main') || document.body;
+            // Scrape from <body>: Claude's usage card lives outside <main>,
+            // and Gemini's page works either way.
+            const root = document.body;
             if (!root) return '';
             const raw = (root.innerText || '').split('\\n')
                 .map(s => s.trim())
@@ -252,18 +254,20 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Poll for the SPA to hydrate. We accept extraction when the visible
-        // text contains either a usage keyword (good signal) or any digit-and-%
-        // / X/Y pattern. Cap at 30s — Claude's React app + API call can be slow.
+        // Poll for the SPA to actually paint the usage data. The previous
+        // loose keyword check (matching "Usage" / "limit" / etc.) fired as
+        // soon as Claude rendered the page heading, before the API-driven
+        // usage card hydrated. Require a literal `digit-%` or `digit/digit`
+        // so we only extract once the real numbers are on the page.
         var elapsed = 0.0
         pollTimer?.invalidate()
         let readyCheck = """
         (() => {
-            const r = document.querySelector('main') || document.body;
+            const r = document.body;
             if (!r) return false;
             const t = r.innerText || '';
             if (t.length < 100) return false;
-            return /\\d+\\s*%|\\d+\\s*\\/\\s*\\d+|limit|usage|remaining|reset|messages|tokens|prompts|hour|week/i.test(t);
+            return /\\d+\\s*%|\\d+\\s*\\/\\s*\\d+/.test(t);
         })();
         """
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] timer in
@@ -271,7 +275,7 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
             elapsed += 0.6
             webView.evaluateJavaScript(readyCheck) { result, _ in
                 let ready = (result as? Bool) ?? false
-                if ready || elapsed > 30 {
+                if ready || elapsed > 45 {
                     timer.invalidate()
                     self.pollTimer = nil
                     self.runExtraction()
