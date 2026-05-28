@@ -9,6 +9,8 @@ The menubar shows two compact, color-coded badges
 opens a compact dropdown with a brand icon, progress bar, reset-time line, and
 per-service action buttons (refresh / login / logout) for each service.
 
+![Screenshot of the menubar badge and dropdown panel](docs/screenshot.png)
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later

@@ -471,9 +471,49 @@ final class UsageMonitor: ObservableObject {
         return Int(s[r])
     }
 
-    // MARK: - Login flow
+    // MARK: - Window flow
 
     private var loginWindows: [Service: NSWindow] = [:]
+    private var settingsWindow: NSWindow?
+
+    /// True when at least one user-facing window is open (login or settings),
+    /// so we should keep the app's activation policy as `.regular`.
+    private var hasOpenWindow: Bool { !loginWindows.isEmpty || settingsWindow != nil }
+
+    /// Show the Settings window. We host SettingsView in our own NSWindow
+    /// instead of using SwiftUI's `Settings` scene because `showSettingsWindow:`
+    /// is unreliable for accessory apps (LSUIElement=true) — the action
+    /// often finds no responder when sent from a MenuBarExtra button.
+    func showSettings() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let existing = settingsWindow {
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+        // NSHostingController auto-sizes the window to the SwiftUI content's
+        // intrinsic size, so there's no slack space at the bottom of the panel.
+        let controller = NSHostingController(rootView: SettingsView().environmentObject(self))
+        let window = NSWindow(contentViewController: controller)
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.title = "AI Session Usage — Settings"
+        window.center()
+        window.isReleasedWhenClosed = false
+
+        let delegate = LoginWindowDelegate { [weak self] in
+            guard let self = self else { return }
+            self.settingsWindow = nil
+            if !self.hasOpenWindow {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+        window.delegate = delegate
+        objc_setAssociatedObject(window, &LoginWindowDelegateKey, delegate, .OBJC_ASSOCIATION_RETAIN)
+
+        settingsWindow = window
+        window.makeKeyAndOrderFront(nil)
+    }
 
     func showLogin(for service: Service) {
         guard let scraper = scrapers[service] else { return }
@@ -512,8 +552,9 @@ final class UsageMonitor: ObservableObject {
             guard let self = self else { return }
             scraper.returnWebViewToHidden()
             self.loginWindows.removeValue(forKey: service)
-            // Drop back to accessory mode if no more login windows are open.
-            if self.loginWindows.isEmpty {
+            // Drop back to accessory mode if no other user-facing window
+            // (login or settings) is still open.
+            if !self.hasOpenWindow {
                 NSApp.setActivationPolicy(.accessory)
             }
             // Try a refresh now that cookies should be in place.

@@ -16,10 +16,9 @@ struct AISessionUsageTrackApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Settings {
-            SettingsView()
-                .environmentObject(monitor)
-        }
+        // No SwiftUI `Settings` scene: showSettingsWindow: is unreliable for
+        // accessory (LSUIElement) apps. SettingsView is opened by
+        // UsageMonitor.showSettings() in its own NSWindow instead.
     }
 }
 

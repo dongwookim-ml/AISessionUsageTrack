@@ -78,8 +78,9 @@ struct MenuContentView: View {
 
                 Spacer()
 
-                Button { openSettings() } label: {
+                Button { monitor.showSettings() } label: {
                     Image(systemName: "gearshape.fill")
+                        .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -87,6 +88,7 @@ struct MenuContentView: View {
 
                 Button { NSApp.terminate(nil) } label: {
                     Image(systemName: "power")
+                        .frame(width: 18, height: 18)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -98,15 +100,6 @@ struct MenuContentView: View {
         .frame(width: 280)
     }
 
-    private func openSettings() {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        if #available(macOS 14, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
-    }
 }
 
 struct ServiceSection: View {
@@ -228,49 +221,119 @@ private struct SubtleIconButtonStyle: ButtonStyle {
 struct SettingsView: View {
     @EnvironmentObject var monitor: UsageMonitor
 
+    private var refreshBinding: Binding<Double> {
+        Binding(get: { Double(monitor.settings.refreshSeconds) },
+                set: { monitor.settings.refreshSeconds = max(30, Int($0.rounded())) })
+    }
+    private var jitterBinding: Binding<Double> {
+        Binding(get: { Double(monitor.settings.jitterSeconds) },
+                set: { monitor.settings.jitterSeconds = max(0, Int($0.rounded())) })
+    }
+    private var menuBarBinding: Binding<Bool> {
+        Binding(get: { monitor.settings.showLabelInMenuBar },
+                set: { monitor.settings.showLabelInMenuBar = $0 })
+    }
+
     var body: some View {
-        Form {
-            Section("Refresh") {
-                Stepper(value: Binding(
-                    get: { monitor.settings.refreshSeconds },
-                    set: { monitor.settings.refreshSeconds = max(30, $0) }
-                ), in: 30...3600, step: 30) {
-                    Text("Base interval: \(monitor.settings.refreshSeconds) s "
-                         + "(\(String(format: "%.1f", Double(monitor.settings.refreshSeconds)/60.0)) min)")
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsSection(title: "Refresh") {
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsRow(label: "Base interval") {
+                        Slider(value: refreshBinding, in: 30...3600, step: 30)
+                            .frame(width: 170)
+                        Text("\(monitor.settings.refreshSeconds) s "
+                             + "(\(String(format: "%.1f", Double(monitor.settings.refreshSeconds) / 60.0)) min)")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 95, alignment: .leading)
+                    }
+                    SettingsRow(label: "Random jitter") {
+                        Slider(value: jitterBinding, in: 0...300, step: 5)
+                            .frame(width: 170)
+                        Text("±\(monitor.settings.jitterSeconds) s")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 95, alignment: .leading)
+                    }
+                    Text("Next refresh fires in "
+                         + "[\(max(15, monitor.settings.refreshSeconds - monitor.settings.jitterSeconds)), "
+                         + "\(monitor.settings.refreshSeconds + monitor.settings.jitterSeconds)] seconds.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Stepper(value: Binding(
-                    get: { monitor.settings.jitterSeconds },
-                    set: { monitor.settings.jitterSeconds = max(0, $0) }
-                ), in: 0...300, step: 5) {
-                    Text("Random jitter: ±\(monitor.settings.jitterSeconds) s")
-                }
-
-                Text("Next refresh fires somewhere in [\(max(15, monitor.settings.refreshSeconds - monitor.settings.jitterSeconds)), \(monitor.settings.refreshSeconds + monitor.settings.jitterSeconds)] seconds after the previous one.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
             }
 
-            Section("Menu bar") {
-                Toggle("Show percentages next to icon",
-                       isOn: Binding(
-                        get: { monitor.settings.showLabelInMenuBar },
-                        set: { monitor.settings.showLabelInMenuBar = $0 }
-                       ))
+            SettingsSection(title: "Menu Bar") {
+                Toggle("Show percentages next to icons", isOn: menuBarBinding)
+                    .toggleStyle(.checkbox)
             }
 
-            Section("Accounts") {
-                ForEach(Service.allCases) { service in
-                    HStack {
-                        Text(service.displayName)
-                        Spacer()
-                        Button("Open Login Window") { monitor.showLogin(for: service) }
-                        Button("Logout") { monitor.logout(service) }
+            SettingsSection(title: "Accounts") {
+                VStack(spacing: 8) {
+                    ForEach(Service.allCases) { service in
+                        AccountRow(service: service).environmentObject(monitor)
                     }
                 }
             }
         }
         .padding(20)
-        .frame(width: 480)
+        .frame(width: 460)
+    }
+}
+
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .tracking(0.5)
+            content()
+                .padding(.leading, 2)
+        }
+    }
+}
+
+private struct SettingsRow<Content: View>: View {
+    let label: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(label)
+                .frame(width: 110, alignment: .leading)
+                .font(.system(size: 12))
+            content()
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct AccountRow: View {
+    let service: Service
+    @EnvironmentObject var monitor: UsageMonitor
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: service.iconName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(service.brandColor)
+                .frame(width: 16)
+            Text(service.displayName)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 80, alignment: .leading)
+            Spacer()
+            Button("Open Login Window") { monitor.showLogin(for: service) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button("Logout") { monitor.logout(service) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.red)
+        }
     }
 }
