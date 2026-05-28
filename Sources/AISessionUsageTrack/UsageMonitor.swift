@@ -35,7 +35,9 @@ enum Service: String, CaseIterable, Identifiable {
 
     // Pages are SPAs; the extraction script scrapes whatever text we can find
     // that looks usage-related. We deliberately keep this loose — the user can
-    // refine selectors later once they see what their account renders.
+    // refine selectors later once they see what their account renders. When
+    // the filtered output is empty we fall back to a clipped dump of the
+    // visible page text so we can see what was actually rendered.
     var extractionScript: String {
         return """
         (() => {
@@ -49,14 +51,18 @@ enum Service: String, CaseIterable, Identifiable {
                 /\\d+\\s*\\/\\s*\\d+/.test(line) ||
                 /limit|usage|reset|remaining|messages|tokens|prompts|requests|week|hour/i.test(line)
             );
-            // De-dupe while keeping order.
             const seen = new Set();
-            const out = [];
+            const filtered = [];
             for (const line of interesting) {
-                if (!seen.has(line)) { seen.add(line); out.push(line); }
-                if (out.length >= 40) break;
+                if (!seen.has(line)) { seen.add(line); filtered.push(line); }
+                if (filtered.length >= 40) break;
             }
-            return out.join('\\n');
+            if (filtered.length > 0) return filtered.join('\\n');
+            // Fallback: dump page text (capped) so the user can see what's there.
+            const dump = raw.join('\\n');
+            const cap = 3000;
+            return '[no keyword matches — raw page text below]\\n' +
+                (dump.length > cap ? dump.slice(0, cap) + '\\n…(truncated)' : dump);
         })();
         """
     }
@@ -132,6 +138,11 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
         )
         // Real Safari UA reduces "browser not supported" pages.
         view.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+        // Enable Safari's Web Inspector against this webview for debugging.
+        // Open Safari → Develop → <Mac name> → AISessionUsageTrack → <url>.
+        if #available(macOS 13.3, *) {
+            view.isInspectable = true
+        }
         self.webView = view
         super.init()
         webView.navigationDelegate = self
@@ -241,16 +252,26 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Poll until either body has noticeable text or we time out.
+        // Poll for the SPA to hydrate. We accept extraction when the visible
+        // text contains either a usage keyword (good signal) or any digit-and-%
+        // / X/Y pattern. Cap at 30s — Claude's React app + API call can be slow.
         var elapsed = 0.0
         pollTimer?.invalidate()
+        let readyCheck = """
+        (() => {
+            const r = document.querySelector('main') || document.body;
+            if (!r) return false;
+            const t = r.innerText || '';
+            if (t.length < 100) return false;
+            return /\\d+\\s*%|\\d+\\s*\\/\\s*\\d+|limit|usage|remaining|reset|messages|tokens|prompts|hour|week/i.test(t);
+        })();
+        """
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
             elapsed += 0.6
-            let check = "(() => { const r = document.querySelector('main') || document.body; return r ? (r.innerText || '').length : 0; })();"
-            webView.evaluateJavaScript(check) { result, _ in
-                let length = (result as? Int) ?? 0
-                if length > 200 || elapsed > 15 {
+            webView.evaluateJavaScript(readyCheck) { result, _ in
+                let ready = (result as? Bool) ?? false
+                if ready || elapsed > 30 {
                     timer.invalidate()
                     self.pollTimer = nil
                     self.runExtraction()
