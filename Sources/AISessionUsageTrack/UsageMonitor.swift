@@ -394,7 +394,12 @@ final class UsageMonitor: ObservableObject {
     }
 
     func refreshNow(_ service: Service) {
-        states[service]?.status = .loading
+        // Keep the previous status visible while refreshing so the menubar
+        // doesn't flash "…" on every periodic refresh. Only show the loading
+        // placeholder on the very first fetch, when we have nothing to show.
+        if case .unknown = states[service]?.status {
+            states[service]?.status = .loading
+        }
         guard let scraper = scrapers[service] else { return }
         scraper.fetch { [weak self] result in
             Task { @MainActor in
