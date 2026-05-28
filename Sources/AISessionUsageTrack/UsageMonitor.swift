@@ -95,6 +95,21 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
     let service: Service
     let webView: WKWebView
 
+    /// Returns a per-service persistent `WKWebsiteDataStore`. The identifier
+    /// is generated on first use and persisted in `UserDefaults` so the same
+    /// store (and therefore the same cookies / logins) is reused on relaunch.
+    static func dataStore(for service: Service) -> WKWebsiteDataStore {
+        let key = "WebsiteDataStoreUUID.\(service.rawValue)"
+        let uuid: UUID
+        if let s = UserDefaults.standard.string(forKey: key), let parsed = UUID(uuidString: s) {
+            uuid = parsed
+        } else {
+            uuid = UUID()
+            UserDefaults.standard.set(uuid.uuidString, forKey: key)
+        }
+        return WKWebsiteDataStore(forIdentifier: uuid)
+    }
+
     private var hiddenWindow: NSWindow?
     private var popupWebViews: [WKWebView] = []   // retain OAuth popup webviews
     private var popupWindows: [NSWindow] = []
@@ -105,8 +120,10 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
     init(service: Service) {
         self.service = service
         let config = WKWebViewConfiguration()
-        // .default() persists cookies to the app's data store across launches.
-        config.websiteDataStore = .default()
+        // Per-service persistent store so cookies (esp. Google's auth cookies)
+        // don't leak between Gemini and Claude. The UUID is stored in
+        // UserDefaults so the same store is reused across app launches.
+        config.websiteDataStore = WebScraper.dataStore(for: service)
         // OAuth flows sometimes use window.open() popups; allow them.
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         let view = WKWebView(
@@ -157,22 +174,44 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
     }
 
-    /// WKWebView layout/JS sometimes misbehaves when not attached to a window;
-    /// keep one offscreen so headless polling stays reliable.
+    /// Host the WKWebView in a panel the WindowServer treats as visible (so
+    /// WebKit renders and does NOT flip `document.hidden = true`, which would
+    /// throttle / pause SPA fetches on Claude and Gemini) — but the panel is
+    /// transparent, non-focusable, non-clickable, off cmd-tab and Mission
+    /// Control, and parked at the corner of the screen.
+    ///
+    /// An `orderOut`'d window causes Claude's React app to never finish
+    /// hydrating during background polls; scraping then only worked while the
+    /// login window was open.
     private func attachToHiddenWindowIfNeeded() {
-        let window = NSWindow(
+        let panel = NSPanel(
             contentRect: webView.frame,
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        window.isReleasedWhenClosed = false
-        window.alphaValue = 0
-        window.contentView = webView
-        // Place far offscreen.
-        window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
-        window.orderOut(nil)
-        hiddenWindow = window
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.hasShadow = false
+        panel.alphaValue = 0.01
+        panel.ignoresMouseEvents = true
+        panel.isMovable = false
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .stationary,
+            .ignoresCycle,
+            .fullScreenAuxiliary,
+            .transient
+        ]
+        panel.level = .normal
+        panel.contentView = webView
+
+        if let screen = NSScreen.main {
+            let f = screen.frame
+            panel.setFrameOrigin(NSPoint(x: f.maxX - 1, y: f.minY))
+        }
+        panel.orderFrontRegardless()
+        hiddenWindow = panel
     }
 
     /// Temporarily move the webView into the given window (for login).
@@ -186,6 +225,9 @@ final class WebScraper: NSObject, WKNavigationDelegate, WKUIDelegate {
         if webView.superview !== window.contentView {
             window.contentView = webView
         }
+        // Re-order so the WindowServer keeps it "visible" and WebKit keeps
+        // rendering after a login window closes.
+        window.orderFrontRegardless()
     }
 
     func fetch(completion: @escaping (Result<(text: String, currentURL: URL?), Error>) -> Void) {
@@ -385,14 +427,14 @@ final class UsageMonitor: ObservableObject {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Clear cookies for a given service so the user can re-login as someone else.
+    /// Clear ALL cookies / storage in this service's data store so the user
+    /// can re-login as someone else. Per-service stores are isolated, so this
+    /// won't affect the other service.
     func logout(_ service: Service) {
-        let store = WKWebsiteDataStore.default()
-        let types: Set<String> = [WKWebsiteDataTypeCookies, WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeSessionStorage]
-        let host = service.url.host ?? ""
+        guard let store = scrapers[service]?.webView.configuration.websiteDataStore else { return }
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
         store.fetchDataRecords(ofTypes: types) { records in
-            let matching = records.filter { $0.displayName.contains(host) || host.contains($0.displayName) }
-            store.removeData(ofTypes: types, for: matching) {
+            store.removeData(ofTypes: types, for: records) {
                 Task { @MainActor in
                     self.states[service]?.status = .needsLogin
                 }
